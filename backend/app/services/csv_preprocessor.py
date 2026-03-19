@@ -207,7 +207,8 @@ class CSVPreprocessor:
 
         seen_hashes: set[str] = set()
 
-        for idx, row in df.iterrows():
+        df_lojas_reduzido = df.head(10)
+        for idx, row in df_lojas_reduzido.iterrows():
             row_dict = row.to_dict()
             row_hash = _row_hash(row_dict)
 
@@ -229,7 +230,8 @@ class CSVPreprocessor:
 
             # Generate embedding
             try:
-                embedding_text = _build_embedding_text(row_dict, schema.text_fields)
+                # Gera string de embedding a partir da linha
+                embedding_text = self.build_narrativa_loja(row_dict)
                 embedding = generate_embedding(embedding_text)
             except Exception as exc:
                 msg = f"Row {idx}: embedding generation failed — {exc}"
@@ -265,6 +267,33 @@ class CSVPreprocessor:
             len(result.error_log),
         )
         return result
+
+    def build_narrativa_loja(self, row_dict) -> str:
+        """
+        Build a narrative string for embedding generation based on the row attributes.
+
+        This is a custom method to create a more descriptive text for the embedding model,
+        combining multiple fields into a single string. Adjust the format as needed.
+        """
+        texto = (
+            f"LOJA E OPERAÇÃO: A unidade {row_dict.get('nome_cp')} ({row_dict.get('cod_franquia')}) é um ponto de venda "
+            f"{row_dict.get('des_local_pdv_agrupado')} do segmento {row_dict.get('des_segmentacao')}. "
+            f"Opera como {row_dict.get('des_modelo')} em uma estrutura {row_dict.get('tp_estrutura')} com {row_dict.get('nr_metragem')}m2. "
+
+            f"LOCALIZAÇÃO: Situada em {row_dict.get('cidade')}-{row_dict.get('uf')}, bairro {row_dict.get('bairro')}. "
+
+            f"DEMOGRAFIA E RENDA: O entorno tem {row_dict.get('qt_pop_total')} habitantes ({row_dict.get('qt_pop_idade_ativa')} em idade ativa). "
+            f"A classe predominante é {row_dict.get('des_classe_predom_regiao_fgv')} com renda per capita de R$ {row_dict.get('vlr_renda_per_capita')}. "
+            f"O valor médio dos imóveis é R$ {row_dict.get('vlr_medio_imovel_geral')}. "
+
+            f"CONSUMO DE BELEZA: Gasto médio em higiene de R$ {row_dict.get('vlr_desp_higiene')}, "
+            f"sendo R$ {row_dict.get('vlr_desp_higiene_perfume')} em perfumes e R$ {row_dict.get('vlr_desp_higiene_prod_cabelo')} em produtos capilares."
+        )
+        return texto
+
+# Aplicando na sua base de dados de lojas
+
+        
 
     def reload(self, file_path: str) -> PreprocessingResult:
         """

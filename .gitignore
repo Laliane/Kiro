@@ -40,5 +40,8 @@ frontend/.vite/
 .DS_Store
 Thumbs.db
 
+# Dados
+backend/data/
+
 # Kiro specs (optional — remove if you want to track them)
 # .kiro/

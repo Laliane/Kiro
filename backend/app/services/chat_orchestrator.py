@@ -47,6 +47,128 @@ _DEFAULT_SCHEMA = KnowledgeBaseSchema(
 
 
 # ---------------------------------------------------------------------------
+# RAG (Retrieval-Augmented Generation) helpers
+# ---------------------------------------------------------------------------
+
+
+def _retrieve_relevant_context(query: str, top_k: int = 5) -> str:
+    """
+    Busca contexto relevante no ChromaDB para a query do usuário.
+    
+    Args:
+        query: Pergunta ou mensagem do usuário
+        top_k: Número máximo de documentos relevantes a recuperar
+    
+    Returns:
+        String formatada com o contexto relevante ou mensagem de base vazia
+    """
+    from app.database import get_records_collection
+    
+    try:
+        collection = get_records_collection()
+        
+        # Verifica se há documentos na base
+        if collection.count() == 0:
+            return "⚠️ Base de conhecimento vazia. Configure DEFAULT_KB_CSV_PATH ou faça upload de um CSV."
+        
+        # Gera embedding da query
+        query_embedding = _generate_embedding(query)
+        
+        # Busca documentos similares
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=min(top_k, collection.count()),
+            include=["metadatas", "documents", "distances"]
+        )
+        
+        if not results["ids"][0]:
+            return "Nenhum documento relevante encontrado na base de conhecimento."
+        
+        # Formata o contexto
+        context_parts = []
+        for idx, (metadata, distance) in enumerate(zip(results["metadatas"][0], results["distances"][0]), 1):
+            # Converte distância em similaridade (0-1)
+            similarity = 1.0 - (distance / 2.0)
+            
+            # Filtra campos relevantes do metadata
+            attrs = {k.replace("attr_", ""): v for k, v in metadata.items() if k.startswith("attr_")}
+            
+            # Formata cada documento
+            attrs_str = ", ".join(f"{k}: {v}" for k, v in attrs.items() if v)
+            context_parts.append(f"[Documento {idx}] (Relevância: {similarity:.0%})\n{attrs_str}")
+        
+        return "\n\n".join(context_parts)
+        
+    except Exception as exc:
+        logger.warning(f"Erro ao recuperar contexto do ChromaDB: {exc}")
+        return "Erro ao acessar a base de conhecimento."
+
+
+def _build_system_prompt(context: str) -> str:
+    """
+    Constrói o prompt de sistema com instruções e contexto para o agente.
+    
+    Args:
+        context: Contexto relevante recuperado do ChromaDB
+    
+    Returns:
+        Prompt de sistema formatado
+    """
+    return f"""Você é um assistente especializado em análise de dados e consulta de base de conhecimento.
+
+## PERSONA E AUTORIDADE
+Você é o Estrategista de Expansão Sênior de um ecossistema de beleza líder no mercado. Sua especialidade é o método de "Loja Espelho" (Twin-Store Analysis): identificar o sucesso de uma nova área (Setor Censitário) comparando-a com o desempenho histórico e as características socioeconômicas de lojas já consolidadas no parque.
+
+## BASE DE CONHECIMENTO DISPONÍVEL
+{context}
+
+## CONTEXTO E OBJETIVO
+Sua missão é mitigar riscos financeiros e operacionais. Uma sugestão assertiva de "Loja Espelho" permite prever o sucesso de uma nova abertura.
+**Raciocínio Crítico:** Se a loja espelho (existente) tem alta performance em um contexto socioeconômico similar ao potencial, a viabilidade é alta.
+**Risco:** Se a similaridade for baixa ou a loja espelho tiver performance ruim, o risco de recompra da franquia pelo franqueador aumenta.
+
+## DIRETRIZES DE ANÁLISE
+Ao receber os dados da Loja Potencial (Alvo), você deve realizar a comparação cruzada baseando-se em dois pilares contidos na base vetorial:
+
+**Pilar A: Atributos do PDV (Ponto de Venda)**
+Tipologia: (Rua, Shopping, Hipermercado, Smart, Híbrida).
+Porte: Metragem quadrada (nr_metragem).
+Modelo de Operação: (Franqueado, Própria, Digital).
+
+**Pilar B: Ecossistema Socioeconômico (Entorno)**
+Perfil de Renda: Renda per capita e Classe Social predominante (FGV).
+Densidade e Público: População total e População em Idade Ativa.
+Comportamento de Consumo: Gastos médios em Higiene, Perfumaria e Cuidados Capilares.
+
+## WORKFLOW DE RESPOSTA
+Consolidação do Perfil Alvo: Resuma os dados da loja potencial recebida, confirmando que entendeu o perfil (ex: "Loja Smart de Rua em área Classe B"). As informações da loja recebida devem conter, no mínimo, a localização da loja para fins de comparação.
+Recuperação Vetorial: Identifique na base as lojas que possuem a menor distância vetorial (maior similaridade) combinando os pilares A e B.
+Justificativa Técnica: Para cada loja sugerida, explique o "porquê" da similaridade.
+Exemplo: "A Loja X foi selecionada porque, embora esteja em outra cidade, possui o mesmo gasto per capita em perfumaria e a mesma metragem da loja alvo."
+Indicador de Confiança: Atribua um nível de similaridade (Baixa, Média, Alta) baseado na convergência dos dados.
+
+## INSTRUÇÕES DE COMPORTAMENTO
+1. **Baseie-se SEMPRE nos dados fornecidos acima** - Não invente informações
+2. **Se a resposta não estiver na base de conhecimento**, diga claramente que não tem essa informação
+4. **Seja conciso e objetivo** - Respostas diretas e úteis
+5. **Use linguagem profissional** mas amigável
+
+
+## O QUE NÃO FAZER
+❌ Não invente dados que não estão na base de conhecimento
+❌ Não responda sobre tópicos fora do escopo da base de dados
+❌ Não faça suposições sem dados concretos
+❌ Não ignore o contexto fornecido
+
+## REGRAS DE OURO (RESTRIÇÕES)
+Fidelidade aos Dados: Utilize apenas os atributos presentes na base de dados (conforme o dicionário de campos: vlr_renda_per_capita, des_classe_predom_regiao_fgv, vlr_desp_higiene_perfume, etc.).
+Filtro de Ruído: Se o usuário mencionar variáveis subjetivas ou fora da lista padrão (ex: "cor da fachada", "clima"), informe gentilmente: "A variável [X] não faz parte dos parâmetros técnicos de expansão e não será considerada na busca por similaridade."
+bjetividade: O foco é técnico. Evite adjetivos desnecessários; foque em dados demográficos e operacionais.
+
+Lembre-se: Você é um assistente confiável - a precisão é mais importante que ter uma resposta para tudo."""
+
+
+# ---------------------------------------------------------------------------
 # Internal LLM call helpers
 # ---------------------------------------------------------------------------
 
@@ -67,6 +189,8 @@ def _call_openai(messages: list[dict]) -> str:
 def _call_llm(history: list[ChatMessage]) -> str:
     """
     Convert ChatMessage history to provider format and call the LLM.
+    
+    Supports system, user, and assistant roles.
 
     Raises ValueError with ErrorCode.LLM_UNAVAILABLE if the provider is unknown.
     Propagates provider exceptions to the caller for error handling.
@@ -181,17 +305,24 @@ class ChatOrchestrator:
     # Messaging
     # ------------------------------------------------------------------
 
-    def send_message(self, session_id: str, message: str) -> ChatMessage:
+    def send_message(self, session_id: str, message: str, use_rag: bool = True) -> ChatMessage:
         """
         Send a user message to the LLM and return the assistant's reply.
 
         Steps:
         1. Validate session exists and is active.
         2. Update last_activity_at.
-        3. Append user message to history.
-        4. Call LLM with full history as context.
-        5. Append assistant reply to history.
-        6. Return the assistant ChatMessage.
+        3. (RAG) Retrieve relevant context from ChromaDB based on the user's message.
+        4. Build system prompt with instructions and context.
+        5. Append user message to history.
+        6. Call LLM with system prompt and full history as context.
+        7. Append assistant reply to history.
+        8. Return the assistant ChatMessage.
+
+        Args:
+            session_id: The session ID
+            message: User's message
+            use_rag: If True, retrieves context from ChromaDB (default: True)
 
         Raises ValueError with appropriate ErrorCode if the session is not
         active or does not exist.
@@ -216,6 +347,7 @@ class ChatOrchestrator:
 
         # Update activity timestamp
         session.last_activity_at = datetime.now(tz=timezone.utc)
+        
         # Append user message
         user_msg = ChatMessage(
             id=str(uuid.uuid4()),
@@ -226,9 +358,38 @@ class ChatOrchestrator:
         )
         messages_store[session_id].append(user_msg)
 
-        # Call LLM with full history as context
+        # RAG: Retrieve relevant context from ChromaDB
+        context = ""
+        if use_rag:
+            try:
+                context = _retrieve_relevant_context(message, top_k=5)
+                logger.info(f"RAG context retrieved for session {session_id}")
+            except Exception as exc:
+                logger.warning(f"RAG context retrieval failed: {exc}")
+                context = "Base de conhecimento não disponível no momento."
+
+        # Build conversation history with system prompt
+        history_with_context = []
+        
+        # Add system prompt as first message (only if using RAG and we have context)
+        if use_rag and context:
+            system_prompt = _build_system_prompt(context)
+            history_with_context.append(
+                ChatMessage(
+                    id="system",
+                    session_id=session_id,
+                    role="system",
+                    content=system_prompt,
+                    timestamp=datetime.now(tz=timezone.utc),
+                )
+            )
+        
+        # Add existing conversation history
+        history_with_context.extend(messages_store[session_id])
+
+        # Call LLM with system prompt + full history as context
         try:
-            reply_content = _call_llm(messages_store[session_id])
+            reply_content = _call_llm(history_with_context)
         except Exception as exc:
             logger.error(
                 "LLM call failed | session_id=%s error=%s",
