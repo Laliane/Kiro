@@ -17,10 +17,12 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from app.database import messages_store, sessions_store
 from app.models import ChatMessage, ErrorCode, KnowledgeBaseSchema, QueryItem, Session
+from langchain_openai import AzureChatOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -28,18 +30,8 @@ logger = logging.getLogger(__name__)
 # LLM provider configuration
 # ---------------------------------------------------------------------------
 
-_LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").lower()
-_LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
-_LLM_MODEL = os.environ.get("LLM_MODEL", "")
-
-_DEFAULT_MODELS = {
-    "openai": "gpt-4o-mini",
-    "anthropic": "claude-3-haiku-20240307",
-}
-
-
-def _get_model() -> str:
-    return _LLM_MODEL or _DEFAULT_MODELS.get(_LLM_PROVIDER, "gpt-4o-mini")
+# Carrega a chave da OpenAI do arquivo .env
+load_dotenv()
 
 
 # ---------------------------------------------------------------------------
@@ -60,36 +52,16 @@ _DEFAULT_SCHEMA = KnowledgeBaseSchema(
 
 
 def _call_openai(messages: list[dict]) -> str:
-    """Call OpenAI chat completions API and return the assistant reply."""
-    import openai  # lazy import — only required when provider is openai
-
-    client = openai.OpenAI(api_key=_LLM_API_KEY)
-    response = client.chat.completions.create(
-        model=_get_model(),
-        messages=messages,
+    """Call OpenAI chat completions API via AzureChatOpenAI and return the assistant reply."""
+    llm = AzureChatOpenAI(
+        azure_deployment="inic1537_gpt-4o_dev",
+        azure_endpoint="https://inic1537-dev-resource.cognitiveservices.azure.com/",
+        api_version="2024-08-01-preview",
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        temperature=0.7
     )
-    return response.choices[0].message.content or ""
-
-
-def _call_anthropic(messages: list[dict]) -> str:
-    """Call Anthropic messages API and return the assistant reply."""
-    import anthropic  # lazy import — only required when provider is anthropic
-
-    # Anthropic separates system messages from the conversation turns
-    system_parts = [m["content"] for m in messages if m["role"] == "system"]
-    conversation = [m for m in messages if m["role"] != "system"]
-
-    client = anthropic.Anthropic(api_key=_LLM_API_KEY)
-    kwargs: dict = {
-        "model": _get_model(),
-        "max_tokens": 4096,
-        "messages": conversation,
-    }
-    if system_parts:
-        kwargs["system"] = "\n\n".join(system_parts)
-
-    response = client.messages.create(**kwargs)
-    return response.content[0].text if response.content else ""
+    response = llm.invoke(messages)
+    return response.content if hasattr(response, "content") else str(response)
 
 
 def _call_llm(history: list[ChatMessage]) -> str:
@@ -101,15 +73,8 @@ def _call_llm(history: list[ChatMessage]) -> str:
     """
     messages = [{"role": msg.role, "content": msg.content} for msg in history]
 
-    if _LLM_PROVIDER == "openai":
-        return _call_openai(messages)
-    elif _LLM_PROVIDER == "anthropic":
-        return _call_anthropic(messages)
-    else:
-        raise ValueError(
-            f"{ErrorCode.LLM_UNAVAILABLE}: Unknown LLM provider '{_LLM_PROVIDER}'. "
-            "Set LLM_PROVIDER to 'openai' or 'anthropic'."
-        )
+    return _call_openai(messages)
+    
 
 
 # ---------------------------------------------------------------------------

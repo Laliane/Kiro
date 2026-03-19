@@ -14,37 +14,31 @@ from __future__ import annotations
 
 import logging
 import os
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 
 from app.models import ErrorCode
 
 logger = logging.getLogger(__name__)
 
 _LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").lower()
-_LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
-_EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
-# Fallback OpenAI key used for embeddings when provider is Anthropic
-_OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", _LLM_API_KEY)
-
+_LLM_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY")
+_EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL")
 
 def generate_embedding(text: str) -> list[float]:
     """
-    Generate an embedding vector for the given text using OpenAI's embedding API.
-
-    When LLM_PROVIDER is "anthropic", falls back to OpenAI embeddings using
-    OPENAI_API_KEY (or LLM_API_KEY if OPENAI_API_KEY is not set).
+    Generate an embedding vector for the given text using AzureOpenAIEmbeddings from langchain.
 
     Raises ValueError with ErrorCode.LLM_UNAVAILABLE on failure.
     """
-    import openai  # lazy import
-
-    api_key = _OPENAI_API_KEY if _LLM_PROVIDER == "anthropic" else _LLM_API_KEY
-    client = openai.OpenAI(api_key=api_key)
     try:
-        response = client.embeddings.create(
-            model=_EMBEDDING_MODEL,
-            input=text,
+        embeddings = AzureOpenAIEmbeddings(
+            azure_deployment=_EMBEDDING_MODEL,
+            api_key=_LLM_API_KEY,
+            azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT", ""),
+            api_version=os.environ.get("AZURE_OPENAI_API_VERSION", ""),
         )
-        return response.data[0].embedding
+        result = embeddings.embed_query(text)
+        return result
     except Exception as exc:
         logger.error("Embedding generation failed: %s", exc)
         raise ValueError(
