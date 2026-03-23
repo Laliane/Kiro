@@ -194,21 +194,23 @@ class CSVPreprocessor:
         if df.empty:
             logger.warning("CSV file '%s' is empty — nothing to load.", file_path)
             return result
+        
 
-        schema = _detect_schema(df)
-        _kb_schema = schema
-        logger.info(
-            "KB schema detected | required=%s optional=%s text=%s id_field=%s",
-            schema.required_fields,
-            schema.optional_fields,
-            schema.text_fields,
-            schema.id_field,
-        )
+        logger.warning("Quantidade de registros: '%s'", df.shape[0])
+        # schema = _detect_schema(df)
+        # _kb_schema = schema
+        # logger.info(
+        #     "KB schema detected | required=%s optional=%s text=%s id_field=%s",
+        #     schema.required_fields,
+        #     schema.optional_fields,
+        #     schema.text_fields,
+        #     schema.id_field,
+        # )
 
         seen_hashes: set[str] = set()
 
-        df_lojas_reduzido = df.head(10)
-        for idx, row in df_lojas_reduzido.iterrows():
+        #df_lojas_reduzido = df.head(10)
+        for idx, row in df.iterrows():
             row_dict = row.to_dict()
             row_hash = _row_hash(row_dict)
 
@@ -220,13 +222,13 @@ class CSVPreprocessor:
             seen_hashes.add(row_hash)
 
             # Validate required fields
-            errors = _validate_required_fields(row_dict, schema.required_fields, int(str(idx)))
-            if errors:
-                for err in errors:
-                    result.error_log.append(err)
-                    logger.warning(err)
-                result.skipped_count += 1
-                continue
+            #errors = _validate_required_fields(row_dict, schema.required_fields, int(str(idx)))
+            # if errors:
+            #     for err in errors:
+            #         result.error_log.append(err)
+            #         logger.warning(err)
+            #     result.skipped_count += 1
+            #     continue
 
             # Generate embedding
             try:
@@ -253,6 +255,7 @@ class CSVPreprocessor:
             try:
                 add_record(record)
                 result.processed_count += 1
+                logger.warning("Quantidade de registros: '%s'", result.processed_count)
             except Exception as exc:
                 msg = f"Row {idx}: failed to store record — {exc}"
                 result.error_log.append(msg)
@@ -279,6 +282,7 @@ class CSVPreprocessor:
             f"LOJA E OPERAÇÃO: A unidade {row_dict.get('nome_cp')} ({row_dict.get('cod_franquia')}) é um ponto de venda "
             f"{row_dict.get('des_local_pdv_agrupado')} do segmento {row_dict.get('des_segmentacao')}. "
             f"Opera como {row_dict.get('des_modelo')} em uma estrutura {row_dict.get('tp_estrutura')} com {row_dict.get('nr_metragem')}m2. "
+            f"A loja tem GMV {row_dict.get('vlr_gmv_2025')}. "
 
             f"LOCALIZAÇÃO: Situada em {row_dict.get('cidade')}-{row_dict.get('uf')}, bairro {row_dict.get('bairro')}. "
 
